@@ -1,6 +1,6 @@
 {
   "name": "pdf-signature-remover",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A semantic.works microservice to strip signatures from a PDF",
   "main": "app.js",
   "directories": {
