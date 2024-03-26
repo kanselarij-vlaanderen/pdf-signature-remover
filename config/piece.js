@@ -27,7 +27,7 @@ WHERE {
       prov:value ?file .
   }
   FILTER EXISTS { ?documentContainer a dossier:Serie ; dossier:Collectie.bestaatUit ?piece }
-  FILTER NOT EXISTS { ?unsignedPiece sign:getekendStukKopie ?piece }
+  FILTER NOT EXISTS { ?piece sign:ongetekendStuk ?unsignedPiece }
 }`;
 
   const response = await queryFunction(queryString);
