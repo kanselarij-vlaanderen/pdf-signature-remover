@@ -47,13 +47,17 @@ PREFIX prov: <http://www.w3.org/ns/prov#>
 PREFIX sign: <http://mu.semte.ch/vocabularies/ext/handtekenen/>
 
 SELECT DISTINCT
-  (?file AS ?uri) ?id ?name ?format ?size ?extension ?created ?physicalUri ?pieceName
+  (?file AS ?uri) ?id ?name ?format ?size ?extension ?created ?physicalUri ?pieceName ?derivedFile
 WHERE {
   GRAPH ${sparqlEscapeUri(graph)} {
     VALUES ?piece { ${sparqlEscapeUri(uri)} }
     ?piece a dossier:Stuk ;
       dct:title ?pieceName ;
-      prov:value ?file .
+      prov:value ?sourceFile .
+
+    OPTIONAL { ?derivedFile prov:hadPrimarySource ?sourceFile }
+
+    BIND(COALESCE(?derivedFile, ?sourceFile) AS ?file)
 
     ?file a nfo:FileDataObject ;
       mu:uuid ?id ;
@@ -82,12 +86,13 @@ WHERE {
       created: binding.created.value,
       physicalUri: binding.physicalUri.value,
       pieceName: binding.pieceName.value,
+      derivedFile: binding.derivedFile?.value,
     };
   }
   return null;
 }
 
-async function linkSignatureStrippedPDFToPiece(pieceUri, unsignedFileUri, graph=APPLICATION_GRAPH, updateFunction=update) {
+async function linkSignatureStrippedPDFToPiece(pieceUri, signedFileUri, unsignedFileUri, replaceDerivedFile=false, graph=APPLICATION_GRAPH, updateFunction=update) {
   const id = uuid();
   const newPieceUri = `${PIECE_RESOURCE_BASE}${id}`;
   const now = new Date();
@@ -102,19 +107,25 @@ PREFIX prov: <http://www.w3.org/ns/prov#>
 
 DELETE {
   GRAPH ${sparqlEscapeUri(graph)} {
-    ${sparqlEscapeUri(pieceUri)} prov:value ?signedFile .
+    ${
+      replaceDerivedFile ? `${sparqlEscapeUri(signedFileUri)} prov:hadPrimarySource ?sourceFile .` :
+      `${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(signedFileUri)} .`
+    }
   }
 }
 INSERT {
   GRAPH ${sparqlEscapeUri(graph)} {
-    ${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(unsignedFileUri)} .
+    ${
+      replaceDerivedFile ? `${sparqlEscapeUri(unsignedFileUri)} prov:hadPrimarySource ?sourceFile .` :
+      `${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(unsignedFileUri)} .`
+    }
 
     ${sparqlEscapeUri(newPieceUri)} a dossier:Stuk ;
       mu:uuid ${sparqlEscapeString(id)} ;
       dct:title ?copyName ;
       dct:created ${sparqlEscapeDateTime(now)} ;
       dct:modified ${sparqlEscapeDateTime(now)} ;
-      prov:value ?signedFile ;
+      prov:value ${sparqlEscapeUri(signedFileUri)} ;
       besluitvorming:vertrouwelijkheidsniveau ?accessLevel ;
       sign:ongetekendStuk ${sparqlEscapeUri(pieceUri)} .
   }
@@ -122,7 +133,7 @@ INSERT {
 WHERE {
   GRAPH ${sparqlEscapeUri(graph)} {
     ${sparqlEscapeUri(pieceUri)} dct:title ?name ;
-      prov:value ?signedFile ;
+      ${replaceDerivedFile ? 'prov:value ?sourceFile ;' : ''}
       besluitvorming:vertrouwelijkheidsniveau ?prevAccessLevel .
   }
   BIND(
