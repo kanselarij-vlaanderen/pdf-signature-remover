@@ -53,7 +53,11 @@ WHERE {
     VALUES ?piece { ${sparqlEscapeUri(uri)} }
     ?piece a dossier:Stuk ;
       dct:title ?pieceName ;
-      prov:value ?file .
+      prov:value ?sourceFile .
+
+    OPTIONAL { ?derivedFile prov:hadPrimarySource ?sourceFile }
+
+    BIND(COALESCE(?derivedFile, ?sourceFile) AS ?file)
 
     ?file a nfo:FileDataObject ;
       mu:uuid ?id ;
@@ -87,7 +91,7 @@ WHERE {
   return null;
 }
 
-async function linkSignatureStrippedPDFToPiece(pieceUri, unsignedFileUri, graph=APPLICATION_GRAPH, updateFunction=update) {
+async function linkSignatureStrippedPDFToPiece(pieceUri, signedFileUri, unsignedFileUri, graph=APPLICATION_GRAPH, updateFunction=update) {
   const id = uuid();
   const newPieceUri = `${PIECE_RESOURCE_BASE}${id}`;
   const now = new Date();
@@ -102,7 +106,7 @@ PREFIX prov: <http://www.w3.org/ns/prov#>
 
 DELETE {
   GRAPH ${sparqlEscapeUri(graph)} {
-    ${sparqlEscapeUri(pieceUri)} prov:value ?signedFile .
+    ${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(signedFileUri)} .
   }
 }
 INSERT {
@@ -114,7 +118,7 @@ INSERT {
       dct:title ?copyName ;
       dct:created ${sparqlEscapeDateTime(now)} ;
       dct:modified ${sparqlEscapeDateTime(now)} ;
-      prov:value ?signedFile ;
+      prov:value ${sparqlEscapeUri(signedFileUri)} ;
       besluitvorming:vertrouwelijkheidsniveau ?accessLevel ;
       sign:ongetekendStuk ${sparqlEscapeUri(pieceUri)} .
   }
@@ -122,7 +126,6 @@ INSERT {
 WHERE {
   GRAPH ${sparqlEscapeUri(graph)} {
     ${sparqlEscapeUri(pieceUri)} dct:title ?name ;
-      prov:value ?signedFile ;
       besluitvorming:vertrouwelijkheidsniveau ?prevAccessLevel .
   }
   BIND(

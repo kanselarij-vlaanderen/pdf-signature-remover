@@ -98,7 +98,7 @@ export default async function handle(deltas) {
     await createMuFile(virtualFile, physicalFile, KANSELARIJ_GRAPH, updateSudo);
 
     console.log(`Linking virtual mu-file ${virtualFile.uri} to piece ${pieceUri}`);
-    await linkSignatureStrippedPDFToPiece(pieceUri, virtualFile.uri, KANSELARIJ_GRAPH, updateSudo);
+    await linkSignatureStrippedPDFToPiece(pieceUri, file.uri, virtualFile.uri, KANSELARIJ_GRAPH, updateSudo);
   }
   console.log('Finished handling incoming deltas');
 }
