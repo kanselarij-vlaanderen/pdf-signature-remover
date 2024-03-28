@@ -47,7 +47,7 @@ PREFIX prov: <http://www.w3.org/ns/prov#>
 PREFIX sign: <http://mu.semte.ch/vocabularies/ext/handtekenen/>
 
 SELECT DISTINCT
-  (?file AS ?uri) ?id ?name ?format ?size ?extension ?created ?physicalUri ?pieceName
+  (?file AS ?uri) ?id ?name ?format ?size ?extension ?created ?physicalUri ?pieceName ?derivedFile
 WHERE {
   GRAPH ${sparqlEscapeUri(graph)} {
     VALUES ?piece { ${sparqlEscapeUri(uri)} }
@@ -86,12 +86,13 @@ WHERE {
       created: binding.created.value,
       physicalUri: binding.physicalUri.value,
       pieceName: binding.pieceName.value,
+      derivedFile: binding.derivedFile?.value,
     };
   }
   return null;
 }
 
-async function linkSignatureStrippedPDFToPiece(pieceUri, signedFileUri, unsignedFileUri, graph=APPLICATION_GRAPH, updateFunction=update) {
+async function linkSignatureStrippedPDFToPiece(pieceUri, signedFileUri, unsignedFileUri, replaceDerivedFile=false, graph=APPLICATION_GRAPH, updateFunction=update) {
   const id = uuid();
   const newPieceUri = `${PIECE_RESOURCE_BASE}${id}`;
   const now = new Date();
@@ -106,12 +107,18 @@ PREFIX prov: <http://www.w3.org/ns/prov#>
 
 DELETE {
   GRAPH ${sparqlEscapeUri(graph)} {
-    ${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(signedFileUri)} .
+    ${
+      replaceDerivedFile ? `${sparqlEscapeUri(signedFileUri)} prov:hadPrimarySource ?sourceFile .` :
+      `${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(signedFileUri)} .`
+    }
   }
 }
 INSERT {
   GRAPH ${sparqlEscapeUri(graph)} {
-    ${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(unsignedFileUri)} .
+    ${
+      replaceDerivedFile ? `${sparqlEscapeUri(unsignedFileUri)} prov:hadPrimarySource ?sourceFile .` :
+      `${sparqlEscapeUri(pieceUri)} prov:value ${sparqlEscapeUri(unsignedFileUri)} .`
+    }
 
     ${sparqlEscapeUri(newPieceUri)} a dossier:Stuk ;
       mu:uuid ${sparqlEscapeString(id)} ;
@@ -126,6 +133,7 @@ INSERT {
 WHERE {
   GRAPH ${sparqlEscapeUri(graph)} {
     ${sparqlEscapeUri(pieceUri)} dct:title ?name ;
+      ${replaceDerivedFile ? 'prov:value ?sourceFile ;' : ''}
       besluitvorming:vertrouwelijkheidsniveau ?prevAccessLevel .
   }
   BIND(
