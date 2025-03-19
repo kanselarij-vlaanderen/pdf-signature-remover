@@ -52,7 +52,7 @@ export default async function handle(deltas) {
     }
 
     const file = await getFileFromPiece(pieceUri, KANSELARIJ_GRAPH, querySudo);
-    if (file === null || file?.extension !== 'pdf') {
+    if (file === null || (file?.format.indexOf('application/pdf') === -1 && file?.extension?.toLowerCase() !== 'pdf')) {
       console.log(`Quad with subject <${pieceUri}> does not have a file or the file isn't a PDF, not processing further`);
       continue;
     }
