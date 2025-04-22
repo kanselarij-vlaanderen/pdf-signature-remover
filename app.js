@@ -1,11 +1,26 @@
 import { app, errorHandler } from 'mu';
 import bodyParser from 'body-parser';
-import { LOG_INCOMING_DELTAS } from './cfg';
+import { LOG_INCOMING_DELTAS, PIECE_RESOURCE_BASE } from './cfg';
 import DeltaCache from './lib/delta-cache';
 import DeltaHandler from './lib/delta-handler';
+import { stripSignaturesFromPiece } from './config/piece';
 
 app.get('/', function(_req, res) {
   res.send('👋 pdf-signature-remover service here');
+});
+
+app.post('/pieces/:piece_id/strip', async function(req, res) {
+  try {
+    const pieceUri = PIECE_RESOURCE_BASE + req.params.piece_id;
+    await stripSignaturesFromPiece(pieceUri);
+    res.status(200).json({ message: 'Successfully stripped signatures from piece', pieceUri });
+  } catch (error) {
+    console.log(error.message);
+    res.status(500).json({ 
+      error: 'Failed to strip signatures from piece',
+      message: error.message 
+    });
+  }
 });
 
 const cache = new DeltaCache();
