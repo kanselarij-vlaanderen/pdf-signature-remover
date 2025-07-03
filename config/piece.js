@@ -6,7 +6,7 @@ import {
   query,
   update,
 } from 'mu';
-import { APPLICATION_GRAPH, KANSELARIJ_GRAPH, FILE_RESOURCE_BASE } from '../cfg';
+import { APPLICATION_GRAPH, KANSELARIJ_GRAPH, FILE_RESOURCE_BASE, RETRY_TIMEOUT_MS } from '../cfg';
 import removeSignatures from '../lib/remove-signatures';
 import { createMuFile, pathToShareUri, readMuFile, deleteMuFile, writeMuFile } from '../lib/file';
 
@@ -28,9 +28,10 @@ WHERE {
     VALUES ?piece { ${sparqlEscapeUri(uri)} }
     ?piece a dossier:Stuk ;
       prov:value ?file .
+    ?documentContainer a dossier:Serie ;
+      dossier:Collectie.bestaatUit ?piece .
+    FILTER NOT EXISTS { ?piece sign:ongetekendStuk ?unsignedPiece }
   }
-  FILTER EXISTS { ?documentContainer a dossier:Serie ; dossier:Collectie.bestaatUit ?piece }
-  FILTER NOT EXISTS { ?piece sign:ongetekendStuk ?unsignedPiece }
 }`;
 
   const response = await queryFunction(queryString);
@@ -47,9 +48,10 @@ PREFIX mu: <http://mu.semte.ch/vocabularies/core/>
 PREFIX dossier: <https://data.vlaanderen.be/ns/dossier#>
 PREFIX prov: <http://www.w3.org/ns/prov#>
 PREFIX sign: <http://mu.semte.ch/vocabularies/ext/handtekenen/>
+PREFIX besluitvorming: <https://data.vlaanderen.be/ns/besluitvorming#>
 
 SELECT DISTINCT
-  (?file AS ?uri) ?id ?name ?format ?size ?extension ?created ?physicalUri ?pieceName ?derivedFile
+  (?file AS ?uri) ?id ?name ?format ?size ?extension ?created ?physicalUri ?pieceName ?derivedFile ?accessLevel
 WHERE {
   GRAPH ${sparqlEscapeUri(graph)} {
     VALUES ?piece { ${sparqlEscapeUri(uri)} }
@@ -57,6 +59,7 @@ WHERE {
       dct:title ?pieceName ;
       prov:value ?sourceFile .
 
+    OPTIONAL { ?piece besluitvorming:vertrouwelijkheidsniveau ?accessLevel }
     OPTIONAL { ?derivedFile prov:hadPrimarySource ?sourceFile }
 
     BIND(COALESCE(?derivedFile, ?sourceFile) AS ?file)
@@ -87,6 +90,7 @@ WHERE {
       physicalUri: binding.physicalUri.value,
       pieceName: binding.pieceName.value,
       derivedFile: binding.derivedFile?.value,
+      accessLevel: binding.accessLevel?.value,
     };
   }
   return null;
@@ -210,15 +214,33 @@ DELETE {
   await updateFunction(updateString);
 }
 
-async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryFunction=query, updateFunction=update) {
-  const mainPiece = await isMainPiece(pieceUri, graph, queryFunction);
-  if (!mainPiece) {
+async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryFunction=query, updateFunction=update, retryCount=0) {
+  try {
+    // TODO do we want to query if this is actually a main piece by relation to agendaitem/subcase/submission/meeting?
+    // checking if the piece is connected to a documentContainer has no further benefit, it is not required anywhere else in this process
+    const mainPiece = await isMainPiece(pieceUri, graph, queryFunction);
+    if (!mainPiece) {
+      if (retryCount < 1) {
+        console.log(`Quad with subject <${pieceUri}> is not a "main" piece, retrying once after waiting ${RETRY_TIMEOUT_MS} ms`);
+        await new Promise((r) => setTimeout(r, RETRY_TIMEOUT_MS));
+        return stripSignaturesFromPiece(pieceUri, graph, queryFunction, updateFunction, retryCount + 1);
+      } else {
+        throw new Error('piece was not connected to documentContainer or already had a signedPiece');
+      }
+    }
+  } catch (error) {
+    console.log(error.message);
     throw new Error(`Quad with subject <${pieceUri}> is not a "main" piece and we will not treat it further`);
   }
 
   const file = await getFileFromPiece(pieceUri, graph, queryFunction);
   if (file === null || (file?.format.indexOf('application/pdf') === -1 && file?.extension?.toLowerCase() !== 'pdf')) {
     throw new Error(`Quad with subject <${pieceUri}> does not have a file or the file isn't a PDF, not processing further`);
+  }
+
+  if (!file?.accessLevel) {
+    // probably publication piece, insert data will fail without accessLevel
+    throw new Error(`Quad with subject <${pieceUri}> does not have an accessLevel, not processing further`);
   }
 
   const pdfBytes = readMuFile(file);
