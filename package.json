@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@lblod/mu-auth-sudo": "^0.6.1",
-    "pdf-lib": "^1.17.1"
+    "@cantoo/pdf-lib": "^2.4.1"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
