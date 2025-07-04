@@ -2,8 +2,10 @@ import path from 'path';
 import fs from 'fs';
 
 const APPLICATION_GRAPH = process.env.MU_APPLICATION_GRAPH || 'http://mu.semte.ch/application';
+const KANSELARIJ_GRAPH = process.env.KANSELARIJ_GRAPH || 'http://mu.semte.ch/graphs/organizations/kanselarij';
 const MU_APPLICATION_FILE_STORAGE_PATH = process.env.MU_APPLICATION_FILE_STORAGE_PATH || '';
 const FILE_RESOURCE_BASE = process.env.FILE_RESOURCE_BASE || 'http://themis.vlaanderen.be/id/bestand/';
+const PIECE_RESOURCE_BASE = process.env.PIECE_RESOURCE_BASE || 'http://themis.vlaanderen.be/id/stuk/';
 
 const LOG_INCOMING_DELTAS = isTruthy(process.env.LOG_INCOMING_DELTAS);
 
@@ -18,7 +20,9 @@ function isTruthy(value) {
 
 export {
   APPLICATION_GRAPH,
+  KANSELARIJ_GRAPH,
   FILE_STORAGE_PATH,
   FILE_RESOURCE_BASE,
+  PIECE_RESOURCE_BASE,
   LOG_INCOMING_DELTAS,
 }

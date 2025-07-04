@@ -6,7 +6,9 @@ import {
   query,
   update,
 } from 'mu';
-import { APPLICATION_GRAPH } from '../cfg';
+import { APPLICATION_GRAPH, KANSELARIJ_GRAPH, FILE_RESOURCE_BASE } from '../cfg';
+import removeSignatures from '../lib/remove-signatures';
+import { createMuFile, pathToShareUri, readMuFile, deleteMuFile, writeMuFile } from '../lib/file';
 
 const PIECE_RESOURCE_BASE = process.env.PIECE_RESOURCE_BASE || 'http://themis.vlaanderen.be/id/stuk/';
 const ACCESS_LEVEL_PUBLIC = 'http://themis.vlaanderen.be/id/concept/toegangsniveau/c3de9c70-391e-4031-a85e-4b03433d6266';
@@ -68,8 +70,6 @@ WHERE {
       dct:created ?created .
     ?physicalUri nie:dataSource ?file .
   }
-  FILTER EXISTS { ?documentContainer a dossier:Serie ; dossier:Collectie.bestaatUit ?piece }
-  FILTER NOT EXISTS { ?piece sign:ongetekendStuk ?unsignedPiece }
 } LIMIT 1`;
 
   const response = await queryFunction(queryString);
@@ -146,8 +146,150 @@ WHERE {
   await updateFunction(queryString);
 }
 
+async function getExistingSignedPieces(pieceUri, graph=APPLICATION_GRAPH, queryFunction=query) {
+  const queryString = `
+PREFIX sign: <http://mu.semte.ch/vocabularies/ext/handtekenen/>
+
+SELECT ?signedPiece ?signedPieceCopy
+WHERE {
+  GRAPH ${sparqlEscapeUri(graph)} {
+    VALUES ?piece { ${sparqlEscapeUri(pieceUri)} }
+    ?signedPiece sign:ongetekendStuk ?piece .
+    OPTIONAL { ?piece sign:getekendStukKopie ?signedPieceCopy . }
+  }
+} LIMIT 1`;
+
+  const response = await queryFunction(queryString);
+
+  if (response?.results?.bindings?.length) {
+    const binding = response.results.bindings[0];
+    return {
+      signedPiece: binding.signedPiece.value,
+      signedPieceCopy: binding.signedPieceCopy.value
+    };
+  }
+  return {
+    signedPiece: null,
+    signedPieceCopy: null
+  };
+}
+
+async function deleteExistingSignedPiece(pieceUri, graph=APPLICATION_GRAPH, updateFunction=update) {
+  const updateString = `
+PREFIX sign: <http://mu.semte.ch/vocabularies/ext/handtekenen/>
+DELETE {
+  GRAPH ${sparqlEscapeUri(graph)} {
+    ?signedPiece sign:ongetekendStuk ?piece ;
+                 ?p ?o .
+  }
+} WHERE {
+  GRAPH ${sparqlEscapeUri(graph)} {
+    VALUES ?piece { ${sparqlEscapeUri(pieceUri)} }
+    ?signedPiece sign:ongetekendStuk ?piece ;
+                ?p ?o .
+  }
+}`;
+  await updateFunction(updateString);
+}
+
+async function deleteExistingSignedPieceCopy(pieceUri, graph=APPLICATION_GRAPH, updateFunction=update) {
+  const updateString = `
+PREFIX sign: <http://mu.semte.ch/vocabularies/ext/handtekenen/>
+DELETE {
+  GRAPH ${sparqlEscapeUri(graph)} {
+    ?piece sign:getekendStukKopie ?signedPieceCopy .
+    ?signedPieceCopy ?p ?o .
+  }
+} WHERE {
+  GRAPH ${sparqlEscapeUri(graph)} {
+    VALUES ?piece { ${sparqlEscapeUri(pieceUri)} }
+    ?piece sign:getekendStukKopie ?signedPieceCopy .
+    ?signedPieceCopy ?p ?o .
+  }
+}`;
+  await updateFunction(updateString);
+}
+
+async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryFunction=query, updateFunction=update) {
+  const mainPiece = await isMainPiece(pieceUri, graph, queryFunction);
+  if (!mainPiece) {
+    throw new Error(`Quad with subject <${pieceUri}> is not a "main" piece and we will not treat it further`);
+  }
+
+  const file = await getFileFromPiece(pieceUri, graph, queryFunction);
+  if (file === null || (file?.format.indexOf('application/pdf') === -1 && file?.extension?.toLowerCase() !== 'pdf')) {
+    throw new Error(`Quad with subject <${pieceUri}> does not have a file or the file isn't a PDF, not processing further`);
+  }
+
+  const pdfBytes = readMuFile(file);
+  const pdfBytesWithoutSignatures = await removeSignatures(pdfBytes);
+
+  if (pdfBytesWithoutSignatures === null) {
+    throw new Error(`Quad with subject <${pieceUri}> did not have signatures in its file, not processing further`);
+  }
+
+  console.log(`Generated PDF without signatures for signed file ${file.uri}`);
+
+  const { id: physicalFileUuid, path: pdfWithoutSignaturesPath} = writeMuFile(pdfBytesWithoutSignatures);
+  console.log(`Wrote PDF without signatures to ${pdfWithoutSignaturesPath}`);
+
+  const { signedPiece, signedPieceCopy } = await getExistingSignedPieces(pieceUri, graph, queryFunction);
+  if (signedPiece) {
+    console.log(`Piece with URI <${pieceUri}> already had a signed piece with URI <${signedPiece}>. Deleting it first`);
+    const signedPieceFile = await getFileFromPiece(signedPiece, graph, queryFunction);
+    if (signedPieceFile) {
+      await deleteMuFile(signedPieceFile.uri, signedPieceFile.physicalUri, graph, updateFunction);
+    }
+    await deleteExistingSignedPiece(pieceUri, graph, updateFunction);
+  }
+  if (signedPieceCopy) {
+    console.log(`Piece with URI <${pieceUri}> already had a flattened signed piece copy with URI <${signedPieceCopy}>. Deleting it first`);
+    const signedPieceCopyFile = await getFileFromPiece(signedPieceCopy, graph, queryFunction);
+    if (signedPieceCopyFile) {
+      await deleteMuFile(signedPieceCopyFile.uri, signedPieceCopyFile.physicalUri, graph, updateFunction);
+    }
+    await deleteExistingSignedPieceCopy(pieceUri, graph, updateFunction);
+  }
+
+  const now = new Date();
+  const virtualFileUuid = uuid();
+  const virtualFile = {
+    id: virtualFileUuid,
+    uri: FILE_RESOURCE_BASE + virtualFileUuid,
+    name: `${file.pieceName}.pdf`,
+    extension: 'pdf',
+    size: pdfBytesWithoutSignatures.byteLength,
+    created: now,
+    format: 'application/pdf',
+  };
+
+  const physicalFile = {
+    id: physicalFileUuid,
+    uri: pathToShareUri(pdfWithoutSignaturesPath),
+    name: `${physicalFileUuid}.pdf`,
+    extension: 'pdf',
+    size: pdfBytesWithoutSignatures.byteLength,
+    created: now,
+    format: 'application/pdf',
+  };
+
+  console.log(`Creating virtual mu-file ${virtualFile.uri}`);
+  await createMuFile(virtualFile, physicalFile, graph, updateFunction);
+
+  console.log(`Linking virtual mu-file ${virtualFile.uri} to piece ${pieceUri}`);
+  await linkSignatureStrippedPDFToPiece(
+    pieceUri,
+    file.uri,
+    virtualFile.uri,
+    !!file.derivedFile,
+    graph,
+    updateFunction
+  );
+}
+
 export {
   isMainPiece,
   getFileFromPiece,
   linkSignatureStrippedPDFToPiece,
+  stripSignaturesFromPiece,
 }
