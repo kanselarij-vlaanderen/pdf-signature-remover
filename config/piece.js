@@ -15,7 +15,7 @@ const ACCESS_LEVEL_PUBLIC = 'http://themis.vlaanderen.be/id/concept/toegangsnive
 const ACCESS_LEVEL_GOVERNMENT = 'http://themis.vlaanderen.be/id/concept/toegangsniveau/634f438e-0d62-4ae4-923a-b63460f6bc46';
 const ACCESS_LEVEL_CABINET = 'http://themis.vlaanderen.be/id/concept/toegangsniveau/13ae94b0-6188-49df-8ecd-4c4a17511d6d';
 
-async function isMainPiece(uri, graph=APPLICATION_GRAPH, queryFunction=query) {
+async function isMainPiece(uri, graph=APPLICATION_GRAPH, queryFunction=query, retryCount=0) {
   const queryString = `
 PREFIX mu: <http://mu.semte.ch/vocabularies/core/>
 PREFIX dossier: <https://data.vlaanderen.be/ns/dossier#>
@@ -34,8 +34,22 @@ WHERE {
   }
 }`;
 
-  const response = await queryFunction(queryString);
-  return response?.boolean ?? false;
+  let response;
+  let mainPiece;
+  try {
+    response = await queryFunction(queryString);
+    mainPiece = response?.boolean ?? false;
+  } catch (error) {
+    console.error('Database encountered an error: ', error?.message);
+    mainPiece = false;
+  }
+  if (!mainPiece && retryCount < 1 ) {
+    console.log(`Quad with subject <${uri}> is not a "main" piece, retrying once after waiting ${RETRY_TIMEOUT_MS} ms`);
+    await new Promise((r) => setTimeout(r, RETRY_TIMEOUT_MS));
+    return isMainPiece(uri, graph, queryFunction, retryCount + 1);
+    // if false twice, piece was not connected to documentContainer or already had a signedPiece
+  }
+  return mainPiece;
 }
 
 async function getFileFromPiece(uri, graph=APPLICATION_GRAPH, queryFunction=query) {
@@ -214,22 +228,9 @@ DELETE {
   await updateFunction(updateString);
 }
 
-async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryFunction=query, updateFunction=update, retryCount=0) {
-  try {
-    // TODO do we want to query if this is actually a main piece by relation to agendaitem/subcase/submission/meeting?
-    // checking if the piece is connected to a documentContainer has no further benefit, it is not required anywhere else in this process
-    const mainPiece = await isMainPiece(pieceUri, graph, queryFunction);
-    if (!mainPiece) {
-      if (retryCount < 1) {
-        console.log(`Quad with subject <${pieceUri}> is not a "main" piece, retrying once after waiting ${RETRY_TIMEOUT_MS} ms`);
-        await new Promise((r) => setTimeout(r, RETRY_TIMEOUT_MS));
-        return stripSignaturesFromPiece(pieceUri, graph, queryFunction, updateFunction, retryCount + 1);
-      } else {
-        throw new Error('piece was not connected to documentContainer or already had a signedPiece');
-      }
-    }
-  } catch (error) {
-    console.log(error.message);
+async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryFunction=query, updateFunction=update) {
+  const mainPiece = await isMainPiece(pieceUri, graph, queryFunction);
+  if (!mainPiece) {
     throw new Error(`Quad with subject <${pieceUri}> is not a "main" piece and we will not treat it further`);
   }
 
