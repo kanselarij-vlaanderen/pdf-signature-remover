@@ -244,8 +244,17 @@ async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryF
     throw new Error(`Quad with subject <${pieceUri}> does not have an accessLevel, not processing further`);
   }
 
-  const pdfBytes = readMuFile(file);
-  const pdfBytesWithoutSignatures = await removeSignatures(pdfBytes);
+  let pdfBytesWithoutSignatures;
+  try {
+    const pdfBytes = readMuFile(file);
+    pdfBytesWithoutSignatures = await removeSignatures(pdfBytes);
+  } catch (error) {
+    let message = error?.message;
+    if (error?.message.includes("encrypted")) {
+      message = "PDF file is encrypted";
+    }
+    throw new Error(`Quad with subject <${pieceUri}> can not be processed. reason: ${message}`);
+  }
 
   if (pdfBytesWithoutSignatures === null) {
     throw new Error(`Quad with subject <${pieceUri}> did not have signatures in its file, not processing further`);

@@ -13,13 +13,15 @@ app.post('/pieces/:piece_id/strip', async function(req, res) {
   try {
     const pieceUri = PIECE_RESOURCE_BASE + req.params.piece_id;
     await stripSignaturesFromPiece(pieceUri);
-    res.status(200).json({ message: 'Successfully stripped signatures from piece', pieceUri });
+    console.log('Successfully stripped signatures from piece ', pieceUri)
+    res.status(204).send();
   } catch (error) {
-    console.log(error.message);
-    res.status(500).json({ 
-      error: 'Failed to strip signatures from piece',
-      message: error.message 
-    });
+    console.trace(error);
+    return res.status(500).send(
+      JSON.stringify({
+        error: `Failed to strip signatures from piece: ${error?.message}`,
+      })
+    );
   }
 });
 
