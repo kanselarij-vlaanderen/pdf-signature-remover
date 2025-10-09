@@ -269,7 +269,8 @@ async function stripSignaturesFromPiece(pieceUri, graph=KANSELARIJ_GRAPH, queryF
   if (signedPiece) {
     console.log(`Piece with URI <${pieceUri}> already had a signed piece with URI <${signedPiece}>. Deleting it first`);
     const signedPieceFile = await getFileFromPiece(signedPiece, graph, queryFunction);
-    if (signedPieceFile) {
+    // in some cases the original file was accidentally linked to by both signedPiece and unsignedPiece. We don't want to delete it if we are re-stripping this document
+    if (signedPieceFile && signedPieceFile.id !== file.id) {
       await deleteMuFile(signedPieceFile.uri, signedPieceFile.physicalUri, graph, updateFunction);
     }
     await deleteExistingSignedPiece(pieceUri, graph, updateFunction);
